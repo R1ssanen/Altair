@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/testing/testing.vcxproj
+/testing/testing.vcxproj.filters
+/Altair.vcxproj
+/Altair.vcxproj.filters
+/Altair.sln
+/testing/plugin_main.c
