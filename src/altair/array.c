@@ -30,12 +30,6 @@ void* CreateArray_(u64 stride, u64 count) {
 	return (void*)(header + ARRAY_TAG_END);
 }
 
-void FreeArray_(void* array) {
-	assert(array != NULL);
-	u64* header = HEADER_(array);
-	free(header);
-}
-
 void* ResizeArray_(void* array) {
 	if (!array) {
 		LERROR("Null array pointer; cannot resize.");
@@ -59,7 +53,13 @@ void* ResizeArray_(void* array) {
 	return (void*)(header + ARRAY_TAG_END);
 }
 
-void RemoveArray_(void* array, u64 index) {
+void AL_Free(void* array) {
+	assert(array != NULL);
+	u64* header = HEADER_(array);
+	free(header);
+}
+
+void AL_Remove(void* array, u64 index) {
 	if (!array) {
 		LERROR("Cannot remove from null array.");
 		return;
@@ -73,5 +73,18 @@ void RemoveArray_(void* array, u64 index) {
 
 	memmove((void*)element, (void*)(element + stride), (AL_Size(array) - index - 1) * stride);
 	header[ARRAY_TAG_LENGTH]--;
+}
+
+void AL_Clear(void* array) {
+	if (!array) {
+		LERROR("Cannon clear null array.");
+		return;
+	}
+
+	u64* header = HEADER_(array);
+	memset(array, 0, header[ARRAY_TAG_STRIDE] * header[ARRAY_TAG_CAPACITY]);
+	header[ARRAY_TAG_LENGTH] = 0;
+
+	return;
 }
 

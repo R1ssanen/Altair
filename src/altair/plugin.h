@@ -11,10 +11,12 @@ enum PluginType {
 	PLUGIN_KEYBOARD,
 };
 
-typedef struct {
+struct AL_PluginManager_;
+
+typedef struct AL_Plugin_ {
 	AL_DLL handle;
 	u32(*update)(u64);
-	u32(*init)(struct PluginManager*); // required
+	u32(*init)(struct AL_PluginManager_*); // required
 	u32(*cleanup)(void);
 	enum PluginType type;
 	u64 id;

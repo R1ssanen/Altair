@@ -1,7 +1,7 @@
-#include "aldefs.h"
-#if defined (AL_PLATFORM_WIN)
+#include "../../aldefs.h"
+#if defined (AL_PLATFORM_UNIX)
 
-#include "log.h"
+#include "../../log.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -19,11 +19,11 @@ void AL_LogMessage(enum LogLevel level, const char* fmt, ...) {
 	assert("Log level must be valid enum" && (level >= LOG_LEVEL_INFO) && (level <= LOG_LEVEL_ERROR));
 	assert("Format-string must be valid" && (fmt != NULL));
 
-#if defined (NO_ESCAPES_LOG)
+#if defined (AL_NO_ESCAPE_CODES)
 	char* buf = fmt;
 #else
 	char buf[1024];
-	sprintf_s(buf, 1024, level_colors[level], fmt);
+	snprintf(buf, 1024, level_colors[level], fmt);
 #endif
 
 	va_list args;

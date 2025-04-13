@@ -8,6 +8,7 @@
 #include "log.h"
 #include "plugin.h"
 #include "aldefs.h"
+#include "threads.h"
 
 b8 AL_CreatePluginManager(AL_PluginManager* manager) {
 	LINFO("Initializing plugin manager.");
@@ -17,8 +18,8 @@ b8 AL_CreatePluginManager(AL_PluginManager* manager) {
 		return false;
 	}
 
-	manager->registry = AL_Array(AL_Plugin, 1);
-	manager->exit = false;
+	manager->mutex = AL_CreateMutex();
+	manager->registry = AL_Array(AL_Plugin, 0);
 
 	LSUCCESS("Plugin manager initialized succesfully.");
 	return true;
@@ -34,6 +35,7 @@ b8 AL_DestroyPluginManager(AL_PluginManager* manager) {
 
 	AL_ForEach(manager->registry, i) AL_UnloadPlugin(manager->registry + i);
 	AL_Free(manager->registry);
+	AL_DestroyMutex(&manager->mutex);
 
 	LSUCCESS("Plugin manager destroyed succesfully.");
 	return true;
@@ -58,7 +60,9 @@ b8 AL_RegisterPlugin(AL_PluginManager* manager, const char* filepath) {
 		return false;
 	}
 
-	AL_Append(manager->registry, plugin);
+	ALSAFE(&manager->mutex,
+		AL_Append(manager->registry, plugin);
+	);
 	LSUCCESS("Plugin '%s' succesfully registered.", plugin.handle.filepath);
 
 	if (plugin.init(manager) == PLUGIN_INVALID) {
@@ -89,8 +93,10 @@ b8 AL_UnregisterPlugin(AL_PluginManager* manager, const char* filepath) {
 		AL_Plugin* plugin = manager->registry + i;
 
 		if (plugin->id == hash) {
-			AL_UnloadPlugin(plugin);
-			AL_Remove(manager->registry, i);
+			ALSAFE(&manager->mutex,
+				AL_UnloadPlugin(plugin);
+				AL_Remove(manager->registry, i);
+			);
 			return true;
 		}
 	}
@@ -111,10 +117,6 @@ AL_Plugin* AL_Query(AL_PluginManager* manager, const char* filepath, b8 required
 	}
 
 	assert(manager->registry != NULL);
-
-	u64 plugin_count = AL_Size(manager->registry);
-	if (plugin_count == 0) return NULL;
-
 	u64 hash = FNV_1A(filepath, strlen(filepath));
 
 query_again:
@@ -124,11 +126,11 @@ query_again:
 	}
 
 	if (required) {
-		if (!AL_RegisterPlugin(manager, filepath)) {
-			LERROR("Could not register required dependency plugin '%s'.", filepath);
-			return NULL;
-		}
-		goto query_again;
+		if (AL_RegisterPlugin(manager, filepath))
+			goto query_again;
+		
+		LERROR("Could not register required dependency plugin '%s'.", filepath);
+		return NULL;
 	}
 
 	return NULL;

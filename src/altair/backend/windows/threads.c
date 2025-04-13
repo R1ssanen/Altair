@@ -1,9 +1,9 @@
-#include "aldefs.h"
+#include "../../aldefs.h"
 #if defined (AL_PLATFORM_WIN)
 
-#include "threads.h"
+#include "../../threads.h"
 
-#include "log.h"
+#include "../../log.h"
 
 b8 AL_CreateThread(void* routine, void* parameter, b8 create_suspended, AL_Thread* thread) {
 	if (!routine) {

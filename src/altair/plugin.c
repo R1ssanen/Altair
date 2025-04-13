@@ -29,22 +29,17 @@ b8 AL_LoadPlugin(const char* filepath, AL_Plugin* plugin) {
 		return false;
 	}
 
-	if (!AL_EnumerateExports(&handle)) {
-		LERROR("Could not enumerate plugin export symbols.");
-		return false;
-	}
-
-	plugin->init = AL_FindSymbol(handle.exports, "init");
+	plugin->init = AL_LoadSymbol(&plugin->handle, "init", true)->addr;
 	if (!plugin->init) {
 		LERROR("Can't find required 'init' function from plugin '%s'.", filepath);
 		return false;
 	}
 
-	plugin->update = AL_FindSymbol(handle.exports, "update");
+	plugin->update = AL_LoadSymbol(&plugin->handle, "update", false)->addr;
 	if (plugin->update) LINFO("Update function found for plugin '%s'.", filepath);
 	else plugin->update = sDefaultIdleUpdate;
 
-	plugin->cleanup = AL_FindSymbol(handle.exports, "cleanup");
+	plugin->cleanup = AL_LoadSymbol(&plugin->handle, "cleanup", false)->addr;
 	if (plugin->cleanup) LINFO("Cleanup function found for plugin '%s'.", filepath);
 
 	plugin->handle = handle;
@@ -88,9 +83,9 @@ void* AL_Get(AL_Plugin* plugin, const char* name) {
 		return NULL;
 	}
 
-	assert(plugin->handle.exports != NULL);
+	assert(plugin->handle.loaded_symbols != NULL);
 
-	void* symbol = AL_FindSymbol(plugin->handle.exports, name);
+	void* symbol = AL_FindSymbol(&plugin->handle, name);
 	if (!symbol) {
 		assert(plugin->handle.filepath != NULL);
 		LERROR("Symbol '%s' is not being exported by plugin '%s'.", name, plugin->handle.filepath);

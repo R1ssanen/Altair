@@ -1,15 +1,15 @@
-#include "aldefs.h"
+#include "../../aldefs.h"
 #if defined (AL_PLATFORM_WIN)
 
-#include "dll.h"
+#include "../../dll.h"
 
 #include <assert.h>
 #include <malloc.h>
 #include <string.h>
 
-#include "array.h"
-#include "hash.h"
-#include "log.h"
+#include "../../array.h"
+#include "../../hash.h"
+#include "../../log.h"
 
 b8 AL_LoadDLL(const char* filepath, AL_DLL* dll) {
 	if (!filepath) {
@@ -22,17 +22,15 @@ b8 AL_LoadDLL(const char* filepath, AL_DLL* dll) {
 		return false;
 	}
 
-	LINFO("%s", filepath);
 	HINSTANCE handle = LoadLibraryA(filepath);
 	if (!handle) {
 		LERROR("Null library handle; cannot load DLL '%s'.", filepath);
-		LERROR("Error: %lu", GetLastError());
 		return false;
 	}
 
 	dll->filepath = filepath;
 	dll->handle = (void*)handle;
-	dll->exports = AL_Array(AL_ExportTableEntry, 1);
+	dll->loaded_symbols = AL_Array(AL_Symbol, 1);
 	return true;
 }
 
@@ -47,14 +45,20 @@ b8 AL_UnloadDLL(AL_DLL* dll) {
 		return false;
 	}
 
-	assert(dll->exports != NULL);
-	AL_ForEach(dll->exports, i) free(dll->exports[i].symname);
-	AL_Free(dll->exports);
+	assert(dll->loaded_symbols != NULL);
+
+	AL_ForEach(dll->loaded_symbols, i) {
+		AL_Symbol* symbol = dll->loaded_symbols + i;
+		free((void*)symbol->symname);
+		symbol->addr = NULL;
+	}
+
+	AL_Free(dll->loaded_symbols);
 
 	return true;
 }
 
-void* AL_LoadSymbol(AL_DLL* dll, const char* symname, b8 required) {
+AL_Symbol* AL_LoadSymbol(AL_DLL* dll, const char* symname, b8 required) {
 	if (!symname) {
 		LERROR("Cannot load null library symbol.");
 		return NULL;
@@ -65,17 +69,27 @@ void* AL_LoadSymbol(AL_DLL* dll, const char* symname, b8 required) {
 		return NULL;
 	}
 
-	void* symbol = GetProcAddress((HMODULE)dll->handle, symname);
-	if (!symbol) {
+	u64 hash = FNV_1A(symname, strlen(symname));
+
+	AL_ForEach(dll->loaded_symbols, i) {
+		AL_Symbol* symbol = dll->loaded_symbols + i;
+		if (symbol->hash == hash) return symbol;
+	}
+
+	void* addr = GetProcAddress((HMODULE)dll->handle, symname);
+	if (!addr) {
 		if (required) LERROR("Symbol '%s' not found within library '%s'.", symname, dll->filepath);
 		else LNOTE("Symbol '%s' not found within library '%s'.", symname, dll->filepath);
 		return NULL;
 	}
 
-	return symbol;
+	AL_Symbol symbol = {.addr = addr, .symname = symname, .hash = hash };
+	AL_Append(dll->loaded_symbols, symbol);
+
+	return AL_Last(dll->loaded_symbols);
 }
 
-static BOOL __stdcall EnumSymbolsCallback(PSYMBOL_INFO info, ULONG symbol_size, PVOID userdata) {
+/*static BOOL __stdcall EnumSymbolsCallback(PSYMBOL_INFO info, ULONG symbol_size, PVOID userdata) {
 	char* name = malloc(info->NameLen + 1);
 	if (!name) {
 		free(name);
@@ -131,27 +145,28 @@ b8 AL_EnumerateExports(AL_DLL* dll) {
 	}
 
 	return true;
-}
+}*/
 
-void* AL_FindSymbol(AL_ExportTableEntry* exports, const char* name) {
-	if (!exports) {
-		LERROR("Cannot find symbol from null export table array.");
+AL_Symbol* AL_FindSymbol(AL_DLL* dll, const char* symname) {
+	 if (!dll) {
+		LERROR("Cannot find symbol from null DLL.");
 		return NULL;
-	}
+	 }
 
-	if (!name) {
-		LERROR("Cannot find null symbol from export table array.");
+	 if (!symname) {
+		LERROR("Cannot search DLL '%s' with a null symbol name string.", dll->filepath);
 		return NULL;
-	}
+	 }
 
-	u64 hash = FNV_1A(name, strlen(name));
+	 u64 hash = FNV_1A(symname, strlen(symname));
 
-	AL_ForEach(exports, i) {
-		AL_ExportTableEntry* export = exports + i;
-		if (export->hash == hash) { return export->addr; }
-	}
+	 AL_ForEach(dll->loaded_symbols, i) {
+		AL_Symbol* symbol = dll->loaded_symbols + i;
+		if (symbol->hash == hash) return symbol;
+	 }
 
-	return NULL;
+	 LERROR("Symbol '%s' not found within DLL '%s'.", symname, dll->filepath);
+	 return NULL;
 }
 
 #endif
