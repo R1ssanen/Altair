@@ -3,8 +3,10 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
-testing/*
-.cache/*
+.cache
+.vscode
+runtime
+*.so
 
 # User-specific files
 *.rsuser

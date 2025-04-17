@@ -1,96 +1,126 @@
 #include "plugin.h"
 
-#include <string.h>
 #include <assert.h>
+#include <string.h>
 
+#include "aldefs.h"
+#include "array.h"
 #include "dll.h"
 #include "hash.h"
 #include "log.h"
-#include "aldefs.h"
 
-static u32 sDefaultIdleUpdate(u64 _) { return 1; }
+static u32 s_DefaultIdleUpdate(u64 _) { return 0; }
 
-b8 AL_LoadPlugin(const char* filepath, AL_Plugin* plugin) {
-	if (!filepath) {
-		LERROR("Invalid plugin filepath; loading failed.");
-		return false;
-	}
+b8         AL_LoadPlugin(const char* filepath, AL_Plugin* plugin) {
+    if (!filepath) {
+        LERROR("Invalid plugin filepath; loading failed.");
+        return false;
+    }
 
-	LINFO("Loading plugin '%s'...", filepath);
+    if (!plugin) {
+        LERROR("Null plugin output pointer; failed to load plugin '%s'.\n", filepath);
+        return false;
+    }
 
-	if (!plugin) {
-		LERROR("Null plugin output pointer; failed to load plugin '%s'.\n", filepath);
-		return false;
-	}
+    if (!AL_LoadDLL(filepath, &plugin->handle)) {
+        LERROR("Can't load plugin '%s'.", filepath);
+        return false;
+    }
 
-	AL_DLL handle;
-	if (!AL_LoadDLL(filepath, &handle)) {
-		LERROR("Can't load plugin '%s'.", filepath);
-		return false;
-	}
+    plugin->uuid    = *AL_Metadata(plugin->handle.filepath);
 
-	plugin->init = AL_LoadSymbol(&plugin->handle, "init", true)->addr;
-	if (!plugin->init) {
-		LERROR("Can't find required 'init' function from plugin '%s'.", filepath);
-		return false;
-	}
+    AL_Symbol* type = AL_LoadSymbol(&plugin->handle, "type", true);
+    if (!type) {
+        LERROR("Can't find required 'type' enum from plugin '%s'.", filepath);
+        return false;
+    } else {
+        plugin->type = *(enum PluginType*)type->addr;
+    }
 
-	plugin->update = AL_LoadSymbol(&plugin->handle, "update", false)->addr;
-	if (plugin->update) LINFO("Update function found for plugin '%s'.", filepath);
-	else plugin->update = sDefaultIdleUpdate;
+    PluginOpts* opt = &plugin->opt;
+    if (plugin->type & PLUGIN_ASYNC) {
+        AL_Symbol* main = AL_LoadSymbol(&plugin->handle, "proc", true);
+        if (!main) {
+            LERROR("Can't find required 'proc' function for asynchronous plugin '%s'.", filepath);
+            return false;
+        }
 
-	plugin->cleanup = AL_LoadSymbol(&plugin->handle, "cleanup", false)->addr;
-	if (plugin->cleanup) LINFO("Cleanup function found for plugin '%s'.", filepath);
+        opt->async.main = main->addr;
 
-	plugin->handle = handle;
-	plugin->id = FNV_1A(handle.filepath, strlen(handle.filepath));
+        if (!AL_CreateThread(opt->async.main, plugin, false, &opt->async.thread)) {
+            LERROR("Could not create thread process for asynchronous plugin '%s'.", filepath);
+            return false;
+        }
+    } else {
+        AL_Symbol* update = AL_LoadSymbol(&plugin->handle, "update", false);
+        if (update) opt->update = update->addr;
+        else
+            opt->update = NULL;
+    }
 
-	LINFO("Plugin '%s' loaded.", filepath);
-	return true;
+    AL_Symbol* init = AL_LoadSymbol(&plugin->handle, "init", false);
+    if (init) plugin->init = init->addr;
+    else
+        plugin->init = NULL;
+
+    AL_Symbol* cleanup = AL_LoadSymbol(&plugin->handle, "cleanup", false);
+    if (cleanup) plugin->cleanup = cleanup->addr;
+    else
+        plugin->cleanup = NULL;
+
+    LINFO("Plugin '%s' loaded.", filepath);
+    return true;
 }
 
 b8 AL_UnloadPlugin(AL_Plugin* plugin) {
-	if (!plugin) {
-		LERROR("Cannot unload null plugin.");
-		return false;
-	}
+    if (!plugin) {
+        LERROR("Cannot unload null plugin.");
+        return false;
+    }
 
-	if (plugin->cleanup) {
-		if (plugin->cleanup() == PLUGIN_INVALID) {
-			LWARN("Internal at-exit cleanup of plugin '%s' failed.", plugin->handle.filepath);
-		}
-	}
+    assert(plugin->handle.filepath != NULL);
 
-	assert(plugin->handle.filepath != NULL);
+    if (plugin->type & PLUGIN_ASYNC) {
+        if (!AL_DestroyThread(&plugin->opt.async.thread, AL_AWAIT_MAX)) {
+            LERROR(
+                "Could not destroy thread of asynchronous plugin '%s'.", plugin->handle.filepath
+            );
+            return false;
+        }
+    }
 
-	if (!AL_UnloadDLL(&plugin->handle)) {
-		LERROR("Plugin '%s' failed to unload.", plugin->handle.filepath);
-		return false;
-	}
+    if (plugin->cleanup) {
+        if (plugin->cleanup() == PLUGIN_INVALID)
+            LWARN("Internal at-exit cleanup of plugin '%s' failed.", plugin->handle.filepath);
+    }
 
-	LSUCCESS("Plugin '%s' (0x%X) succesfully unloaded.", plugin->handle.filepath, plugin->id);
-	return true;
+    if (!AL_UnloadDLL(&plugin->handle)) {
+        LERROR("Plugin '%s' failed to unload.", plugin->handle.filepath);
+        return false;
+    }
+
+    LSUCCESS("Plugin '%s' (0x%X) succesfully unloaded.", plugin->handle.filepath, plugin->uuid);
+    return true;
 }
 
-void* AL_Get(AL_Plugin* plugin, const char* name) {
-	if (!plugin) {
-		LERROR("Cannot get symbols from null plugin.");
-		return NULL;
-	}
+void* AL_Get(AL_Plugin* plugin, const char* name, b8 required) {
+    if (!plugin) {
+        LERROR("Cannot get symbols from null plugin.");
+        return NULL;
+    }
 
-	if (!name) {
-		LERROR("Cannot get symbols from plugin with null name.");
-		return NULL;
-	}
+    if (!name) {
+        LERROR("Cannot get symbols from plugin with null name.");
+        return NULL;
+    }
 
-	assert(plugin->handle.loaded_symbols != NULL);
+    assert(plugin->handle.loaded_symbols != NULL);
+    assert(plugin->handle.filepath != NULL);
 
-	void* symbol = AL_FindSymbol(&plugin->handle, name);
-	if (!symbol) {
-		assert(plugin->handle.filepath != NULL);
-		LERROR("Symbol '%s' is not being exported by plugin '%s'.", name, plugin->handle.filepath);
-		return NULL;
-	}
+    AL_Symbol* symbol = AL_LoadSymbol(&plugin->handle, name, required);
+    if (symbol) return symbol->addr;
 
-	return symbol;
+    if (required)
+        LERROR("Symbol '%s' is not being exported by plugin '%s'.", name, plugin->handle.filepath);
+    return NULL;
 }

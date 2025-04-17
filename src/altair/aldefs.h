@@ -19,11 +19,13 @@
 
 #elif (defined(__linux__) || defined(__unix__) || defined(__unix))
 
-#    include <unistd.h>
+#    include <libgen.h>
 #    include <linux/limits.h>
+#    include <unistd.h>
 
 #    define AL_PLATFORM_UNIX
-#    define AL_MAX_PATH (PATH_MAX - 1)
+#    define AL_MAX_PATH     (PATH_MAX - 1)
+#    define AL_PARENT(path) dirname(path)
 
 #    if (defined(__GNUC__) || defined(__clang__))
 #        define ALAPI __attribute__((visibility("default")))

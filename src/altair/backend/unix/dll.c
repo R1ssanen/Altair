@@ -1,140 +1,109 @@
 #include "../../aldefs.h"
-#if defined (AL_PLATFORM_UNIX)
+#if defined(AL_PLATFORM_UNIX)
 
-#include "../../dll.h"
+#    include <dlfcn.h>
+#    include <malloc.h>
 
-#include <dlfcn.h>
-#include <malloc.h>
-
-#include "../../log.h"
-#include "../../array.h"
-#include "../../hash.h"
+#    include "../../array.h"
+#    include "../../dll.h"
+#    include "../../hash.h"
+#    include "../../log.h"
+#    include "../../string.h"
 
 b8 AL_LoadDLL(const char* filepath, AL_DLL* dll) {
     if (!filepath) {
-		LERROR("Invalid library filepath; loading failed.");
-		return false;
-	}
+        LERROR("Invalid library filepath; loading failed.");
+        return false;
+    }
 
-	if (!dll) {
-		LERROR("Null DLL output pointer; failed to load DLL '%s'.", filepath);
-		return false;
-	}
+    if (!dll) {
+        LERROR("Null DLL output pointer; failed to load DLL '%s'.", filepath);
+        return false;
+    }
 
-	void* handle = dlopen(filepath, RTLD_LAZY);
-	if (!handle) {
-		LERROR("Null library handle; cannot load DLL '%s'.", filepath);
-		return false;
-	}
+    void* handle = dlopen(filepath, RTLD_LAZY);
+    if (!handle) {
+        LERROR("Null library handle; cannot load DLL '%s'.\ndlerror: %s", filepath, dlerror());
+        return false;
+    }
 
-	dll->filepath = filepath;
-	dll->handle = (void*)handle;
-	dll->loaded_symbols = AL_Array(AL_Symbol, 1);
-	return true;
+    dll->filepath       = AL_CopyC(filepath, strlen(filepath));
+    dll->handle         = handle;
+    dll->loaded_symbols = AL_Array(AL_Symbol, 0);
+
+    return true;
 }
 
 b8 AL_UnloadDLL(AL_DLL* dll) {
-    if (!dll) {
-		LERROR("Cannot unload null DLL.");
-		return false;
-	}
+    if (!dll) return true;
 
-	if (!dlclose(dll->handle)) {
-		LERROR("Cannot free DLL '%s'.", dll->filepath);
-		return false;
-	}
+    assert(dll->handle != NULL);
+    assert(dll->loaded_symbols != NULL);
 
-	assert(dll->loaded_symbols != NULL);
+    if (dlclose(dll->handle) != 0) {
+        LERROR("Cannot free DLL '%s'.\ndlerror: %s", dll->filepath, dlerror());
+        return false;
+    }
 
-	AL_ForEach(dll->loaded_symbols, i) {
-		AL_Symbol* symbol = dll->loaded_symbols + i;
-		free((void*)symbol->symname);
-		symbol->addr = NULL;
-	}
+    AL_ForEach(dll->loaded_symbols, i) AL_Free(dll->loaded_symbols[i].symname);
+    AL_Free(dll->loaded_symbols);
 
-	AL_Free(dll->loaded_symbols);
-
-	return true;
+    return true;
 }
 
 AL_Symbol* AL_LoadSymbol(AL_DLL* dll, const char* symname, b8 required) {
     if (!symname) {
-		LERROR("Cannot load null library symbol.");
-		return NULL;
-	}
-
-	if (!dll) {
-		LERROR("Cannot load symbols from null library.");
-		return NULL;
-	}
-
-	u64 hash = FNV_1A(symname, strlen(symname));
-
-	AL_ForEach(dll->loaded_symbols, i) {
-		AL_Symbol* symbol = dll->loaded_symbols + i;
-		if (symbol->hash == hash) return symbol;
-	}
-
-	void* addr = dlsym(dll->handle, symname);
-	if (!addr) {
-		if (required) LERROR("Symbol '%s' not found within library '%s'.", symname, dll->filepath);
-		else LNOTE("Symbol '%s' not found within library '%s'.", symname, dll->filepath);
-		return NULL;
-	}
-
-	AL_Symbol symbol = {.addr = addr, .symname = symname, .hash = hash };
-	AL_Append(dll->loaded_symbols, symbol);
-
-	return AL_Last(dll->loaded_symbols);
-}
-
-/*
-b8 AL_EnumerateExports(AL_DLL* dll) {
-    if (!dll) {
-		LERROR("Cannot enumerate exports of null DLL.");
-		return false;
-	}
-
-    void* init_addr = AL_LoadSymbol(dll, "AL_LoadDLL", true);
-    if (!init_addr) return false;
-
-    Dl_info info;
-    ElfW(Sym)* sym_table;
-    if (!dladdr1(init_addr, &info, (void**)(&sym_table), RTLD_DL_SYMENT)) {
-        return false;
+        LERROR("Cannot load null library symbol.");
+        return NULL;
     }
 
-    for (ElfW(Sym)* sym = sym_table; sym != NULL; ++sym) {
-        LINFO("Symbol: %s", sym->st_name);
-    }
-    //void* base = info.dli_fbase;
-    //ElfW(Ehdr)* eheader = base;
-
-	assert(dll->filepath != NULL);
-    return true;
-}
-*/
-
-AL_Symbol* AL_FindSymbol(AL_DLL* dll, const char* symname) {
     if (!dll) {
-		LERROR("Cannot find symbol from null DLL.");
-		return NULL;
-	}
+        LERROR("Cannot load symbols from null library.");
+        return NULL;
+    }
 
-	if (!symname) {
-		LERROR("Cannot search DLL '%s' with a null symbol name string.", dll->filepath);
-		return NULL;
-	}
+    assert(dll->loaded_symbols != NULL);
+    assert(dll->handle != NULL);
 
-	u64 hash = FNV_1A(symname, strlen(symname));
+    // already loaded
+    AL_Symbol* existing = AL_FindSymbol(dll, symname, false);
+    if (existing) return existing;
 
-	AL_ForEach(dll->loaded_symbols, i) {
-		AL_Symbol* symbol = dll->loaded_symbols + i;
-		if (symbol->hash == hash) return symbol;
-	}
+    void* addr = dlsym(dll->handle, symname);
+    if (!addr) {
+        if (required) LERROR("Symbol '%s' not found within library '%s'.", symname, dll->filepath);
+        return NULL;
+    }
 
-	LERROR("Symbol '%s' not found within DLL '%s'.", symname, dll->filepath);
-	return NULL;
+    AL_Symbol symbol = { .addr = addr, .symname = AL_CopyC(symname, strlen(symname)) };
+    AL_Append(dll->loaded_symbols, symbol);
+
+    return AL_Last(dll->loaded_symbols);
+}
+
+AL_Symbol* AL_FindSymbol(AL_DLL* dll, const char* symname, b8 required) {
+    if (!dll) {
+        LERROR("Cannot find symbol from null DLL.");
+        return NULL;
+    }
+
+    if (!symname) {
+        LERROR("Cannot search DLL '%s' with a null symbol name string.", dll->filepath);
+        return NULL;
+    }
+
+    u64 hash = FNV_1A_C(symname, strlen(symname));
+    assert(dll->loaded_symbols != NULL);
+
+    AL_ForEach(dll->loaded_symbols, i) {
+        AL_Symbol* symbol = dll->loaded_symbols + i;
+
+        assert(symbol->symname != NULL);
+        if (*AL_Metadata(symbol->symname) == hash) return symbol;
+    }
+
+    if (required) LERROR("Symbol '%s' not found within DLL '%s'.", symname, dll->filepath);
+    return NULL;
 }
 
 #endif

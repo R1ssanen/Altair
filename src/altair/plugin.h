@@ -3,29 +3,44 @@
 
 #include "aldefs.h"
 #include "dll.h"
-#include "aldefs.h"
+#include "threads.h"
 
 enum PluginType {
-	PLUGIN_INVALID = 0,
-	PLUGIN_OTHER,
-	PLUGIN_KEYBOARD,
+    PLUGIN_INVALID  = 0,
+    PLUGIN_OTHER    = 0x0001,
+    PLUGIN_KEYBOARD = 0x0010,
+    PLUGIN_ASYNC    = 0x0100,
 };
 
 struct AL_PluginManager_;
+struct AL_Plugin_;
+
+typedef b8 (*PFN_plugin_init_t)(struct AL_PluginManager_*, struct AL_Plugin_*);
+typedef b8 (*PFN_plugin_cleanup_t)(void);
+typedef void (*PFM_plugin_update_t)(u64);
+
+typedef union {
+    struct AsyncOpt {
+        AL_Thread         thread;
+        PFN_thread_proc_t main;
+    } async;
+
+    PFM_plugin_update_t update;
+} PluginOpts;
 
 typedef struct AL_Plugin_ {
-	AL_DLL handle;
-	u32(*update)(u64);
-	u32(*init)(struct AL_PluginManager_*); // required
-	u32(*cleanup)(void);
-	enum PluginType type;
-	u64 id;
+    PluginOpts           opt;
+    AL_DLL               handle;
+    PFN_plugin_cleanup_t cleanup;
+    PFN_plugin_init_t    init;
+    u64                  uuid;
+    enum PluginType      type;
 } AL_Plugin;
 
-b8 AL_LoadPlugin(const char* filepath, AL_Plugin* plugin);
+b8    AL_LoadPlugin(const char* filepath, AL_Plugin* plugin);
 
-b8 AL_UnloadPlugin(AL_Plugin* plugin);
+b8    AL_UnloadPlugin(AL_Plugin* plugin);
 
-void* AL_Get(AL_Plugin* plugin, const char* symbol);
+void* AL_Get(AL_Plugin* plugin, const char* symbol, b8 required);
 
 #endif

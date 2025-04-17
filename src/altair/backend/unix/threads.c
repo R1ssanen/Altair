@@ -1,43 +1,40 @@
 #include "../../aldefs.h"
-#if defined (AL_PLATFORM_UNIX)
+#if defined(AL_PLATFORM_UNIX)
 
-#include "../../threads.h"
+#    include <assert.h>
+#    include <errno.h>
+#    include <malloc.h>
+#    include <pthread.h>
+#    include <string.h>
+#    include <time.h>
 
-#include <pthread.h>
-#include <malloc.h>
-#include <time.h>
-#include <string.h>
-#include <errno.h>
-#include <assert.h>
-
-#include "../../log.h"
+#    include "../../log.h"
+#    include "../../threads.h"
 
 typedef struct {
     pthread_mutex_t lock;
-    pthread_cond_t cond;
+    pthread_cond_t  cond;
 } UnixMutexInternal;
 
 typedef struct {
-    pthread_t pid;
-    u32 (*routine)(void*);
+    pthread_t         pid;
+    PFN_thread_proc_t routine;
 } UnixThreadInternal;
 
 AL_Mutex AL_CreateMutex(void) {
-    void* internals = malloc(sizeof(UnixMutexInternal));
-    UnixMutexInternal* mutex = internals;
-    
-    mutex->lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
-    mutex->cond = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
+    void*              internals = malloc(sizeof(UnixMutexInternal));
+    UnixMutexInternal* mutex     = internals;
+
+    mutex->lock                  = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+    mutex->cond                  = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
 
     return (AL_Mutex){ .internals = internals, .flag = SHARED_FLAG_INVALID };
 }
 
-void AL_DestroyMutex(AL_Mutex* mutex)  {
-    if (!mutex) {
-        LERROR("Cannot destroy a null mutex.");
-        return;
-    }
+void AL_DestroyMutex(AL_Mutex* mutex) {
+    if (!mutex) return;
 
+    assert(mutex->internals);
     UnixMutexInternal* internals = mutex->internals;
 
     pthread_mutex_destroy(&internals->lock);
@@ -76,14 +73,15 @@ b8 AL_AwaitCondition(AL_Mutex* mutex, u32 timeout_ms) {
     assert(mutex->internals != NULL);
 
     UnixMutexInternal* internals = mutex->internals;
-    if (timeout_ms == AL_AWAIT_MAX)
+    if (timeout_ms == AL_AWAIT_MAX) {
         pthread_cond_wait(&internals->cond, &internals->lock);
+    }
 
     else {
-        u64 seconds = timeout_ms / 1000;
-        u64 nanoseconds = (timeout_ms % 1000) * 1E6;
-        struct timespec timeout = {.tv_sec = seconds, .tv_nsec = nanoseconds };
-        
+        u64             seconds     = timeout_ms / 1000;
+        u64             nanoseconds = (timeout_ms % 1000) * 1E6;
+        struct timespec timeout     = { .tv_sec = seconds, .tv_nsec = nanoseconds };
+
         if (pthread_cond_timedwait(&internals->cond, &internals->lock, &timeout) == ETIMEDOUT) {
             LWARN("Condition await timed out.");
             return false;
@@ -101,10 +99,10 @@ enum SharedFlag AL_SafeReadFlag(AL_Mutex* mutex) {
 
     enum SharedFlag flag = SHARED_FLAG_INVALID;
 
-    ALSAFE(mutex,
-        flag = mutex->flag;
+    ALSAFE(mutex, {
+        flag        = mutex->flag;
         mutex->flag = SHARED_FLAG_INVALID;
-    );
+    });
 
     return flag;
 }
@@ -115,11 +113,7 @@ void AL_SafeWriteFlag(AL_Mutex* mutex, enum SharedFlag flag) {
         return;
     }
 
-    assert(flag != SHARED_FLAG_INVALID);
-
-    ALSAFE(mutex,
-        mutex->flag = flag;
-    );
+    ALSAFE(mutex, mutex->flag = flag;);
 }
 
 void AL_WakeCondition(AL_Mutex* mutex) {
@@ -140,14 +134,16 @@ static void* s_ThreadProcWrapper(void* argument) {
 
     AL_Thread* thread = argument;
     assert(thread->internals != NULL);
+
     UnixThreadInternal* internals = thread->internals;
 
-    ALSAFE(&thread->mutex,
-        while (thread->mutex.flag != SHARED_FLAG_DEPLOY)
+    ALSAFE(&thread->mutex, {
+        while ((thread->mutex.flag != SHARED_FLAG_DEPLOY) &&
+               (thread->mutex.flag != SHARED_FLAG_EXIT)) {
             AL_AwaitCondition(&thread->mutex, AL_AWAIT_MAX);
-
+        }
         thread->mutex.flag = SHARED_FLAG_INVALID;
-    );
+    });
 
     LINFO("Thread 0x%X deployed; entering process routine.", internals->pid);
     assert(internals->routine != NULL);
@@ -156,23 +152,25 @@ static void* s_ThreadProcWrapper(void* argument) {
     return NULL;
 }
 
-b8 AL_CreateThread(void* routine, void* user_context, b8 launch_immediately, AL_Thread* thread) {
+b8 AL_CreateThread(
+    PFN_thread_proc_t routine, void* user_context, b8 launch_immediately, AL_Thread* thread
+) {
     if (!routine) {
-		LERROR("Cannot create thread with null routine.");
-		return false;
-	}
+        LERROR("Cannot create thread with null routine.");
+        return false;
+    }
 
-	if (!thread) {
-		LERROR("Cannot create thread with null output pointer.");
-		return false;
-	}
+    if (!thread) {
+        LERROR("Cannot create thread with null output pointer.");
+        return false;
+    }
 
-    thread->mutex = AL_CreateMutex();
-    thread->user_context = user_context;
+    thread->mutex                 = AL_CreateMutex();
+    thread->user_context          = user_context;
 
-    thread->internals = malloc(sizeof(UnixThreadInternal));
+    thread->internals             = malloc(sizeof(UnixThreadInternal));
     UnixThreadInternal* internals = thread->internals;
-    internals->routine = routine;
+    internals->routine            = routine;
 
     if (pthread_create(&internals->pid, NULL, s_ThreadProcWrapper, thread) != 0) {
         LERROR("Could not create new thread.");
@@ -180,10 +178,9 @@ b8 AL_CreateThread(void* routine, void* user_context, b8 launch_immediately, AL_
     }
 
     pthread_detach(internals->pid);
-    
+
     if (launch_immediately) {
         LSUCCESS("Thread 0x%X created and launched succesfully.", internals->pid);
-        
         AL_SafeWriteFlag(&thread->mutex, SHARED_FLAG_DEPLOY);
         AL_WakeCondition(&thread->mutex);
         return true;
@@ -209,24 +206,21 @@ void AL_StartThread(AL_Thread* thread) {
 }
 
 b8 AL_DestroyThread(AL_Thread* thread, u32 timeout_ms) {
-    if (!thread) {
-        LERROR("Cannot destroy null thread.");
-        return false;
-    }
+    if (!thread) return true;
 
     AL_SafeWriteFlag(&thread->mutex, SHARED_FLAG_EXIT);
 
+    assert(thread->internals != NULL);
     UnixThreadInternal* internals = thread->internals;
-    LINFO("Thread 0x%X requested to exit; awaiting with timeout of %lums...", internals->pid, timeout_ms);
-    
-    if (!AL_AwaitCondition(&thread->mutex, timeout_ms));
-    else LINFO("Thread 0x%X succesfully returned.", internals->pid);
-    
-    AL_DestroyMutex(&thread->mutex);
-    thread->user_context = NULL;
+    LINFO(
+        "Thread 0x%X requested to exit; awaiting with timeout of %lums...", internals->pid,
+        timeout_ms
+    );
 
-    internals->pid = 0;
-    internals->routine = NULL;
+    if (AL_AwaitCondition(&thread->mutex, timeout_ms))
+        LINFO("Thread 0x%X succesfully returned.", internals->pid);
+
+    AL_DestroyMutex(&thread->mutex);
     free(thread->internals);
 
     return true;
