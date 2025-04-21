@@ -4,7 +4,9 @@
 #    include "../../log.h"
 #    include "../../threads.h"
 
-b8 AL_CreateThread(void* routine, void* parameter, b8 create_suspended, AL_Thread* thread) {
+b8 AL_CreateThread(
+    PFN_thread_proc_t routine, void* parameter, b8 create_suspended, AL_Thread* thread
+) {
     if (!routine) {
         LERROR("Cannot create thread with null routine.");
         return false;

@@ -106,7 +106,7 @@ b8 AL_DestroyFileWatcher(AL_FileWatcher* watcher) {
     assert(watcher->callbacks != NULL);
     assert(watcher->internals != NULL);
 
-    if (!AL_DestroyThread(&watcher->thread, AL_AWAIT_MAX)) {
+    if (!AL_DestroyThread(&watcher->thread, AL_TIMEOUT_MAX)) {
         LERROR("Could not destroy filewatcher thread process.");
         return false;
     }
@@ -236,8 +236,7 @@ u32 s_FileWatcherProc(void* argument) {
     u64 max_size  = base_size + AL_MAX_PATH + 2;
     u8  buffer[max_size];
 
-    while (AL_SafeReadFlag(&watcher->thread.mutex) != SHARED_FLAG_EXIT) {
-
+    AL_AsyncWhile(&watcher->thread.mutex, SYNC_EXIT) {
         ssize_t bytes_read = read(internals->instance, (void*)buffer, max_size);
         if (bytes_read == -1) {
             switch (errno) {
@@ -282,11 +281,8 @@ u32 s_FileWatcherProc(void* argument) {
         }
     }
 
-    LSUCCESS("Filewatcher succesfully exiting.");
-
-    // signal main thread
     AL_WakeCondition(&watcher->thread.mutex);
-    return 0;
+    return true;
 }
 
 #endif

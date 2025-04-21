@@ -37,25 +37,22 @@ b8         AL_LoadPlugin(const char* filepath, AL_Plugin* plugin) {
         plugin->type = *(enum PluginType*)type->addr;
     }
 
-    PluginOpts* opt = &plugin->opt;
     if (plugin->type & PLUGIN_ASYNC) {
-        AL_Symbol* main = AL_LoadSymbol(&plugin->handle, "proc", true);
-        if (!main) {
+        AL_Symbol* proc = AL_LoadSymbol(&plugin->handle, "proc", true);
+        if (!proc) {
             LERROR("Can't find required 'proc' function for asynchronous plugin '%s'.", filepath);
             return false;
         }
 
-        opt->async.main = main->addr;
-
-        if (!AL_CreateThread(opt->async.main, plugin, false, &opt->async.thread)) {
+        if (!AL_CreateThread((PFN_thread_proc_t)proc->addr, plugin, false, &plugin->opt.thread)) {
             LERROR("Could not create thread process for asynchronous plugin '%s'.", filepath);
             return false;
         }
     } else {
         AL_Symbol* update = AL_LoadSymbol(&plugin->handle, "update", false);
-        if (update) opt->update = update->addr;
+        if (update) plugin->opt.update = update->addr;
         else
-            opt->update = NULL;
+            plugin->opt.update = NULL;
     }
 
     AL_Symbol* init = AL_LoadSymbol(&plugin->handle, "init", false);
@@ -81,7 +78,7 @@ b8 AL_UnloadPlugin(AL_Plugin* plugin) {
     assert(plugin->handle.filepath != NULL);
 
     if (plugin->type & PLUGIN_ASYNC) {
-        if (!AL_DestroyThread(&plugin->opt.async.thread, AL_AWAIT_MAX)) {
+        if (!AL_DestroyThread(&plugin->opt.thread, AL_TIMEOUT_MAX)) {
             LERROR(
                 "Could not destroy thread of asynchronous plugin '%s'.", plugin->handle.filepath
             );
@@ -90,7 +87,7 @@ b8 AL_UnloadPlugin(AL_Plugin* plugin) {
     }
 
     if (plugin->cleanup) {
-        if (plugin->cleanup() == PLUGIN_INVALID)
+        if (!plugin->cleanup())
             LWARN("Internal at-exit cleanup of plugin '%s' failed.", plugin->handle.filepath);
     }
 

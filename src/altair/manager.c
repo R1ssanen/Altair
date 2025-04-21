@@ -27,10 +27,10 @@ b8 AL_CreatePluginManager(AL_PluginManager* manager) {
 
 b8 AL_DestroyPluginManager(AL_PluginManager* manager) {
     if (!manager) return true;
-
     assert(manager->registry != NULL);
 
     AL_ForEach(manager->registry, i) AL_UnloadPlugin(manager->registry + i);
+
     AL_Free(manager->registry);
     AL_DestroyMutex(&manager->mutex);
 
@@ -58,7 +58,7 @@ b8 AL_RegisterPlugin(AL_PluginManager* manager, const char* filepath) {
     assert(plugin.init != NULL);
     assert(manager->registry != NULL);
 
-    if (plugin.init(manager, &plugin) == PLUGIN_INVALID) {
+    if (!plugin.init(manager, &plugin)) {
         LERROR("Initialization of plugin '%s' failed.", plugin.handle.filepath);
         AL_UnloadPlugin(&plugin);
         return false;
@@ -67,7 +67,7 @@ b8 AL_RegisterPlugin(AL_PluginManager* manager, const char* filepath) {
     ALSAFE(&manager->mutex, AL_Append(manager->registry, plugin););
     LSUCCESS("Plugin '%s' succesfully registered.", plugin.handle.filepath);
 
-    if (plugin.type & PLUGIN_ASYNC) AL_StartThread(&plugin.opt.async.thread);
+    if (plugin.type & PLUGIN_ASYNC) AL_StartThread(&plugin.opt.thread);
     return true;
 }
 

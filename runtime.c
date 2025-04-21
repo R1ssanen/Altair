@@ -29,16 +29,10 @@ static void on_modify(AL_String dir, AL_String file, void* argument) {
     full_path                   = AL_Concat(full_path, file);
 
     if (AL_Query(manager, full_path, false)) {
-        if (!AL_UnregisterPlugin(manager, full_path)) {
-            AL_Free(full_path);
-            return;
-        }
+        if (!AL_UnregisterPlugin(manager, full_path)) return AL_Free(full_path);
     }
 
-    if (!AL_RegisterPlugin(manager, full_path)) {
-        AL_UnregisterPlugin(manager, full_path);
-        return;
-    }
+    if (!AL_RegisterPlugin(manager, full_path)) return;
 
     AL_Free(full_path);
 }
@@ -70,7 +64,7 @@ int main(int argc, char* argv[]) {
     AL_AddFileCallback(&watcher, on_modify, FILE_MODIFIED, &manager);
 
     u64 frame = 0;
-    while (AL_SafeReadFlag(&manager.mutex) != SHARED_FLAG_EXIT) {
+    AL_AsyncWhile(&manager.mutex, SYNC_EXIT) {
         AL_ForEach(manager.registry, i) {
             AL_Plugin* plugin = manager.registry + i;
 

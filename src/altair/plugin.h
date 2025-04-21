@@ -17,19 +17,14 @@ struct AL_Plugin_;
 
 typedef b8 (*PFN_plugin_init_t)(struct AL_PluginManager_*, struct AL_Plugin_*);
 typedef b8 (*PFN_plugin_cleanup_t)(void);
-typedef void (*PFM_plugin_update_t)(u64);
-
-typedef union {
-    struct AsyncOpt {
-        AL_Thread         thread;
-        PFN_thread_proc_t main;
-    } async;
-
-    PFM_plugin_update_t update;
-} PluginOpts;
+typedef void (*PFN_plugin_update_t)(u64);
 
 typedef struct AL_Plugin_ {
-    PluginOpts           opt;
+    union {
+        AL_Thread           thread;
+        PFN_plugin_update_t update;
+    } opt;
+
     AL_DLL               handle;
     PFN_plugin_cleanup_t cleanup;
     PFN_plugin_init_t    init;
